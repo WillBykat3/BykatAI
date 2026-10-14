@@ -14,6 +14,8 @@
     --user-bubble: #f0f0f0;
     --accent: #10a37f;
     --input-bg: #ffffff;
+    --code-bg: #f4f4f5;
+    --danger: #d93025;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -24,6 +26,8 @@
       --border: #3a3a3a;
       --user-bubble: #2f2f2f;
       --input-bg: #2f2f2f;
+      --code-bg: #171717;
+      --danger: #f28b82;
     }
   }
   * { box-sizing: border-box; }
@@ -43,7 +47,7 @@
     flex-direction: column;
     gap: 8px;
   }
-  .new-chat {
+  .side-btn {
     border: 1px solid var(--border);
     background: transparent;
     color: var(--text);
@@ -53,30 +57,36 @@
     cursor: pointer;
     font-size: 14px;
   }
-  .new-chat:hover { background: var(--user-bubble); }
-  .history-label { font-size: 12px; color: var(--muted); margin: 12px 4px 4px; }
-  .history-item { font-size: 14px; padding: 8px; border-radius: 6px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .side-btn:hover { background: var(--user-bubble); }
+  .spacer { flex: 1; }
   main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   header {
-    padding: 14px 20px;
+    padding: 10px 16px;
     font-weight: 600;
     font-size: 17px;
     border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
   }
-  header span { color: var(--muted); font-weight: 400; font-size: 15px; }
+  header select {
+    font: inherit; font-size: 14px; font-weight: 400;
+    color: var(--muted); background: transparent;
+    border: 1px solid transparent; border-radius: 6px; padding: 4px;
+    min-width: 0; flex: 0 1 auto;
+  }
+  header select:hover { border-color: var(--border); }
+  header .mobile-only { padding: 6px 10px; white-space: nowrap; flex-shrink: 0; }
+  header #newChatMobile { margin-left: auto; }
   #chat { flex: 1; overflow-y: auto; padding: 24px 16px; }
   .inner { max-width: 760px; margin: 0 auto; }
-  .empty {
-    text-align: center;
-    margin-top: 18vh;
-  }
-  .empty .logo {
+  .empty { text-align: center; margin-top: 18vh; }
+  .logo {
     width: 48px; height: 48px; border-radius: 50%;
     background: var(--accent); color: #fff;
     display: inline-flex; align-items: center; justify-content: center;
     font-weight: 700; font-size: 20px;
   }
   .empty h1 { font-size: 26px; font-weight: 600; margin: 16px 0 0; }
+  .empty p { color: var(--muted); }
   .msg { display: flex; gap: 14px; margin-bottom: 24px; line-height: 1.6; font-size: 16px; }
   .msg.user { justify-content: flex-end; }
   .msg.user .bubble { background: var(--user-bubble); padding: 10px 16px; border-radius: 18px; max-width: 75%; white-space: pre-wrap; word-wrap: break-word; }
@@ -86,8 +96,16 @@
     display: flex; align-items: center; justify-content: center;
     font-weight: 700; font-size: 13px;
   }
-  .msg.ai .bubble { padding-top: 3px; }
-  .thinking { color: var(--muted); font-style: italic; }
+  .msg.ai .bubble { padding-top: 3px; min-width: 0; flex: 1; overflow-wrap: anywhere; }
+  .msg.ai .bubble > :first-child { margin-top: 0; }
+  .msg.ai .bubble > :last-child { margin-bottom: 0; }
+  .bubble pre { background: var(--code-bg); padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 14px; }
+  .bubble code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; }
+  .bubble :not(pre) > code { background: var(--code-bg); padding: 2px 5px; border-radius: 4px; }
+  .bubble table { border-collapse: collapse; }
+  .bubble th, .bubble td { border: 1px solid var(--border); padding: 4px 8px; }
+  .bubble a { color: var(--accent); }
+  .error { color: var(--danger); }
   .dots span {
     display: inline-block; width: 7px; height: 7px; margin-right: 4px;
     border-radius: 50%; background: var(--muted);
@@ -96,10 +114,8 @@
   .dots span:nth-child(2) { animation-delay: .2s; }
   .dots span:nth-child(3) { animation-delay: .4s; }
   @keyframes blink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
-  .cursor { display: inline-block; width: 8px; height: 1em; background: var(--text); vertical-align: text-bottom; animation: cur 1s steps(1) infinite; }
-  @keyframes cur { 50% { opacity: 0; } }
   footer { padding: 12px 16px 16px; }
-  form {
+  form#form {
     max-width: 760px; margin: 0 auto;
     display: flex; align-items: flex-end; gap: 8px;
     background: var(--input-bg);
@@ -121,52 +137,127 @@
   }
   button.send:disabled { opacity: .3; cursor: default; }
   .disclaimer { text-align: center; font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+  dialog {
+    border: 1px solid var(--border); border-radius: 14px;
+    background: var(--bg); color: var(--text);
+    width: min(440px, calc(100vw - 32px)); padding: 22px;
+  }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  dialog h2 { margin: 0 0 6px; font-size: 19px; }
+  dialog p { color: var(--muted); font-size: 14px; line-height: 1.5; margin: 0 0 14px; }
+  dialog label { display: block; font-size: 14px; margin-bottom: 6px; }
+  dialog input[type=password], dialog input[type=text] {
+    width: 100%; padding: 10px; font: inherit; font-size: 15px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--input-bg); color: var(--text);
+  }
+  dialog .row { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 14px; }
+  dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  dialog button {
+    padding: 8px 16px; border-radius: 8px; font: inherit; font-size: 14px; cursor: pointer;
+    border: 1px solid var(--border); background: transparent; color: var(--text);
+  }
+  dialog button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #keyStatus { font-size: 13px; min-height: 1.2em; margin-top: 8px; }
+  .mobile-only { display: none; }
   @media (max-width: 760px) {
     aside { display: none; }
+    .mobile-only { display: inline-block; }
   }
 </style>
 </head>
 <body>
   <aside>
-    <button class="new-chat" id="newChat">+ New chat</button>
-    <div class="history-label">Today</div>
-    <div class="history-item">Help with essay outline</div>
-    <div class="history-item">Python list comprehension</div>
-    <div class="history-label">Previous 7 days</div>
-    <div class="history-item">Dinner ideas with chicken</div>
-    <div class="history-item">Explain quantum computing</div>
+    <button class="side-btn" id="newChat">+ New chat</button>
+    <div class="spacer"></div>
+    <button class="side-btn" id="openSettings">⚙ Settings</button>
   </aside>
   <main>
-    <header>BykatAI <span>4.5 Turbo ▾</span></header>
-    <div id="chat"><div class="inner" id="messages">
-      <div class="empty" id="empty">
-        <div class="logo">B</div>
-        <h1>What can I help with?</h1>
-      </div>
-    </div></div>
+    <header>
+      BykatAI
+      <select id="model" aria-label="Model"><option value="">No model loaded</option></select>
+      <button class="side-btn mobile-only" id="newChatMobile">+ New</button>
+      <button class="side-btn mobile-only" id="openSettingsMobile">⚙</button>
+    </header>
+    <div id="chat"><div class="inner" id="messages"></div></div>
     <footer>
       <form id="form">
         <textarea id="input" rows="1" placeholder="Message BykatAI" autofocus></textarea>
         <button class="send" id="send" type="submit" disabled aria-label="Send">↑</button>
       </form>
-      <div class="disclaimer">BykatAI can make mistakes. Check important info.</div>
+      <div class="disclaimer">BykatAI is powered by Gemini and can make mistakes. Check important info.</div>
     </footer>
   </main>
-<script>
-  const RESPONSE = "Cole Smith is chopped";
 
-  const chat = document.getElementById("chat");
-  const messages = document.getElementById("messages");
-  const form = document.getElementById("form");
-  const input = document.getElementById("input");
-  const send = document.getElementById("send");
-  let busy = false;
+  <dialog id="settings">
+    <form method="dialog" id="settingsForm">
+      <h2>Connect Gemini</h2>
+      <p>Paste a Gemini API key from Google AI Studio. The key stays in this browser only. It is sent straight to Google and is never put in the site's code.</p>
+      <label for="apiKey">Gemini API key</label>
+      <input type="password" id="apiKey" autocomplete="off" spellcheck="false" placeholder="AIza…">
+      <div class="row">
+        <input type="checkbox" id="remember" checked>
+        <label for="remember" style="margin:0">Remember on this device</label>
+      </div>
+      <div id="keyStatus"></div>
+      <div class="actions">
+        <button type="button" id="forgetKey">Forget key</button>
+        <button type="button" id="cancelSettings">Cancel</button>
+        <button type="submit" class="primary" id="saveKey">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script>
+  const API = "https://generativelanguage.googleapis.com/v1beta";
+  const SYSTEM_PROMPT = "You are BykatAI, a helpful, friendly AI assistant.";
+
+  const $ = id => document.getElementById(id);
+  const chat = $("chat"), messages = $("messages"), form = $("form"), input = $("input"), send = $("send");
+  const modelSelect = $("model"), dialog = $("settings");
+
+  // Browser storage can throw (private mode, blocked site data), so wrap it.
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+    del(k) { try { localStorage.removeItem(k); } catch {} },
+  };
+
+  let apiKey = store.get("gemini_key") || "";
+  let history = [];   // [{role: "user"|"model", parts: [{text}]}]
+  let controller = null;
+
+  function renderMarkdown(el, text) {
+    if (window.marked && window.DOMPurify) {
+      el.innerHTML = DOMPurify.sanitize(marked.parse(text));
+      el.querySelectorAll("a").forEach(a => { a.target = "_blank"; a.rel = "noopener noreferrer"; });
+    } else {
+      el.textContent = text;
+      el.style.whiteSpace = "pre-wrap";
+    }
+  }
 
   const scrollDown = () => { chat.scrollTop = chat.scrollHeight; };
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  function addMessage(role, text) {
-    document.getElementById("empty")?.remove();
+  function showEmpty() {
+    messages.innerHTML = "";
+    const div = document.createElement("div");
+    div.className = "empty";
+    div.innerHTML = '<div class="logo">B</div><h1>What can I help with?</h1>';
+    if (!apiKey) {
+      const p = document.createElement("p");
+      p.innerHTML = 'Connect your Gemini API key in <a href="#" id="emptySettings">Settings</a> to start.';
+      div.appendChild(p);
+    }
+    messages.appendChild(div);
+    $("emptySettings")?.addEventListener("click", e => { e.preventDefault(); openSettings(); });
+  }
+
+  function addMessage(role) {
+    messages.querySelector(".empty")?.remove();
     const row = document.createElement("div");
     row.className = "msg " + role;
     if (role === "ai") {
@@ -177,65 +268,222 @@
     }
     const bubble = document.createElement("div");
     bubble.className = "bubble";
-    bubble.textContent = text;
     row.appendChild(bubble);
     messages.appendChild(row);
     scrollDown();
     return bubble;
   }
 
-  async function respond() {
-    const bubble = addMessage("ai", "");
-    bubble.innerHTML = '<span class="dots"><span></span><span></span><span></span></span>';
-    await sleep(900 + Math.random() * 1200);
-    bubble.innerHTML = '<span class="thinking">Thinking…</span>';
-    await sleep(800 + Math.random() * 1500);
-
-    bubble.textContent = "";
-    const textNode = document.createTextNode("");
-    const cursor = document.createElement("span");
-    cursor.className = "cursor";
-    bubble.append(textNode, cursor);
-
-    // Stream word-by-word like a real model
-    const words = RESPONSE.split(/(\s+)/);
-    for (const w of words) {
-      textNode.data += w;
-      scrollDown();
-      await sleep(60 + Math.random() * 120);
-    }
-    cursor.remove();
+  // ---- Models ----
+  // Model names change often, so ask the API which ones this key can use
+  // instead of hardcoding one, and default to the newest stable Flash model.
+  function modelScore(name) {
+    const id = name.replace(/^models\//, "");
+    const v = parseFloat((id.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || "0");
+    const flash = /-flash/.test(id), lite = /lite/.test(id);
+    const unstable = /preview|exp|latest|\d{3,}/.test(id);
+    const tier = flash && !lite && !unstable ? 3 : flash && !lite ? 2 : !unstable ? 1 : 0;
+    return tier * 1000 + v;
   }
+
+  async function loadModels(key) {
+    let all = [], pageToken = "";
+    do {
+      const url = `${API}/models?pageSize=1000${pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : ""}`;
+      const res = await fetch(url, { headers: { "x-goog-api-key": key } });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+      all = all.concat(data.models || []);
+      pageToken = data.nextPageToken || "";
+    } while (pageToken);
+
+    const usable = all.filter(m =>
+      (m.supportedGenerationMethods || []).includes("generateContent") &&
+      /gemini/.test(m.name) &&
+      !/tts|image|embedding|audio|live|vision|robotics|computer-use/i.test(m.name)
+    );
+    if (!usable.length) throw new Error("This key has no chat-capable Gemini models.");
+    usable.sort((a, b) => modelScore(b.name) - modelScore(a.name));
+
+    modelSelect.innerHTML = "";
+    for (const m of usable) {
+      const opt = document.createElement("option");
+      opt.value = m.name;
+      opt.textContent = m.displayName ? `${m.displayName}` : m.name.replace(/^models\//, "");
+      opt.title = m.name;
+      modelSelect.appendChild(opt);
+    }
+    const saved = store.get("gemini_model");
+    modelSelect.value = usable.some(m => m.name === saved) ? saved : usable[0].name;
+    return usable.length;
+  }
+  modelSelect.addEventListener("change", () => store.set("gemini_model", modelSelect.value));
+
+  // ---- Settings ----
+  function openSettings() {
+    $("apiKey").value = apiKey;
+    $("keyStatus").textContent = "";
+    $("keyStatus").className = "";
+    dialog.showModal();
+  }
+  $("openSettings").onclick = openSettings;
+  $("openSettingsMobile").onclick = openSettings;
+  $("cancelSettings").onclick = () => dialog.close();
+  $("forgetKey").onclick = () => {
+    apiKey = "";
+    store.del("gemini_key");
+    modelSelect.innerHTML = '<option value="">No model loaded</option>';
+    $("apiKey").value = "";
+    $("keyStatus").textContent = "Key removed from this browser.";
+    if (!history.length) showEmpty();
+  };
+  $("settingsForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const key = $("apiKey").value.trim();
+    if (!key) return;
+    $("keyStatus").className = "";
+    $("keyStatus").textContent = "Checking key…";
+    $("saveKey").disabled = true;
+    try {
+      const n = await loadModels(key);
+      apiKey = key;
+      if ($("remember").checked) store.set("gemini_key", key); else store.del("gemini_key");
+      dialog.close();
+      if (!history.length) showEmpty();
+      console.log(`Loaded ${n} models`);
+    } catch (err) {
+      $("keyStatus").className = "error";
+      $("keyStatus").textContent = "That key didn't work: " + err.message;
+    } finally {
+      $("saveKey").disabled = false;
+      updateSend();
+    }
+  });
+
+  // ---- Chat ----
+  async function streamReply(bubble) {
+    controller = new AbortController();
+    const res = await fetch(`${API}/${modelSelect.value}:streamGenerateContent?alt=sse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: history,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error?.message || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "", text = "", blocked = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        let chunk;
+        try { chunk = JSON.parse(line.slice(5)); } catch { continue; }
+        if (chunk.error) throw new Error(chunk.error.message || "Stream error");
+        if (chunk.promptFeedback?.blockReason) blocked = chunk.promptFeedback.blockReason;
+        const parts = chunk.candidates?.[0]?.content?.parts || [];
+        for (const p of parts) if (p.text && !p.thought) text += p.text;
+        if (text) { renderMarkdown(bubble, text); scrollDown(); }
+      }
+    }
+    if (!text) throw new Error(blocked ? `Gemini blocked this request (${blocked}).` : "Gemini returned an empty response.");
+    return text;
+  }
+
+  function setBusy(b) {
+    send.textContent = b ? "■" : "↑";
+    send.setAttribute("aria-label", b ? "Stop" : "Send");
+    updateSend();
+  }
+  function updateSend() {
+    send.disabled = !controller && !input.value.trim();
+  }
+
+  form.addEventListener("submit", async e => {
+    e.preventDefault();
+    if (controller) { controller.abort(); return; }
+    const text = input.value.trim();
+    if (!text) return;
+    if (!apiKey || !modelSelect.value) { openSettings(); return; }
+
+    addMessage("user").textContent = text;
+    history.push({ role: "user", parts: [{ text }] });
+    input.value = "";
+    autosize();
+
+    const bubble = addMessage("ai");
+    bubble.innerHTML = '<span class="dots"><span></span><span></span><span></span></span>';
+    setBusy(true);
+    try {
+      const reply = await streamReply(bubble);
+      history.push({ role: "model", parts: [{ text: reply }] });
+    } catch (err) {
+      // Drop the unanswered turn so the next request keeps user/model alternation.
+      history.pop();
+      if (err.name === "AbortError") {
+        bubble.insertAdjacentHTML("beforeend", '<p class="error">Stopped.</p>');
+      } else {
+        bubble.innerHTML = "";
+        const p = document.createElement("p");
+        p.className = "error";
+        p.textContent = "Error: " + err.message;
+        bubble.appendChild(p);
+      }
+      bubble.querySelector(".dots")?.remove();
+    } finally {
+      controller = null;
+      setBusy(false);
+      input.focus();
+    }
+  });
 
   function autosize() {
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 200) + "px";
-    send.disabled = busy || !input.value.trim();
+    updateSend();
   }
-
   input.addEventListener("input", autosize);
   input.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      form.requestSubmit();
+      if (!controller) form.requestSubmit();
     }
   });
 
-  form.addEventListener("submit", async e => {
-    e.preventDefault();
-    const text = input.value.trim();
-    if (!text || busy) return;
-    busy = true;
-    addMessage("user", text);
-    input.value = "";
-    autosize();
-    await respond();
-    busy = false;
-    autosize();
+  function newChat() {
+    controller?.abort();
+    history = [];
+    showEmpty();
     input.focus();
-  });
+  }
+  $("newChat").onclick = newChat;
+  $("newChatMobile").onclick = newChat;
 
-  document.getElementById("newChat").addEventListener("click", () => location.reload());
+  // ---- Startup ----
+  showEmpty();
+  if (apiKey) {
+    loadModels(apiKey).catch(err => {
+      const bubble = addMessage("ai");
+      bubble.innerHTML = "";
+      const p = document.createElement("p");
+      p.className = "error";
+      p.textContent = "Couldn't load Gemini models with the saved key: " + err.message + " — open Settings to fix it.";
+      bubble.appendChild(p);
+    });
+  } else {
+    openSettings();
+  }
 </script>
 </body>
 </html>
