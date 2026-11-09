@@ -2,7 +2,7 @@
 //
 // POST { action: "models" }                        → { models, default }
 // POST { conversation_id, model?, web_search?, generate_title? }
-//      → NDJSON stream of events:
+//      → Server-Sent Events, each "data: {json}":
 //        {type:"text", text} · {type:"sources", sources} · {type:"title", title}
 //        {type:"done", message} · {type:"error", error}
 //
@@ -18,6 +18,8 @@ const MAX_HISTORY = 100;                 // messages sent to Gemini per request
 const MAX_INLINE_BYTES = 12 * 1024 * 1024; // raw file bytes per request (base64 adds ~33%)
 const MAX_TEXT_FILE_CHARS = 200_000;
 const MODEL_ID = /^[a-z0-9][a-z0-9.\-]{1,80}$/;
+const CONNECT_TIMEOUT_MS = 45_000; // waiting for Gemini to start answering
+const IDLE_TIMEOUT_MS = 45_000;    // longest gap allowed between streamed chunks
 
 const SYSTEM_PROMPT = `You are BykatAI, a helpful, knowledgeable and friendly AI assistant.
 Answer clearly and accurately. Use Markdown for structure when it helps (headings, lists, tables, code blocks with a language tag).
@@ -141,7 +143,14 @@ async function buildContents(sb: SupabaseClient, rows: Row[]) {
     if (!parts.length) parts.push({ text: "(empty message)" });
     contents[i] = { role: row.role, parts };
   }
-  return contents;
+  // Gemini expects turns to alternate; merge back-to-back messages from the same side.
+  const merged: typeof contents = [];
+  for (const c of contents) {
+    const prev = merged[merged.length - 1];
+    if (prev && prev.role === c.role) prev.parts.push(...c.parts);
+    else merged.push(c);
+  }
+  return merged;
 }
 
 // ───────────── Title ─────────────
@@ -157,6 +166,7 @@ async function makeTitle(apiKey: string, model: string, question: string, answer
         }],
       }],
     }),
+    signal: AbortSignal.timeout(20_000),
   });
   if (!res.ok) return null;
   const data = await res.json();
@@ -172,6 +182,9 @@ async function makeTitle(apiKey: string, model: string, question: string, answer
 // ───────────── Handler ─────────────
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  const t0 = Date.now();
+  const log = (stage: string, extra: Record<string, unknown> = {}) =>
+    console.log(JSON.stringify({ stage, ms: Date.now() - t0, ...extra }));
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   const token = req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "") ?? "";
@@ -229,6 +242,7 @@ Deno.serve(async (req) => {
     return json({ error: "The last message must be from the user" }, 400);
   }
 
+  log("history loaded", { messages: history.length, model });
   const contents = await buildContents(sb, history);
   const request: Record<string, unknown> = {
     contents,
@@ -236,18 +250,38 @@ Deno.serve(async (req) => {
   };
   if (body.web_search === true) request.tools = [{ google_search: {} }];
 
-  const upstream = await fetch(`${GEMINI_BASE}/models/${model}:streamGenerateContent?alt=sse`, {
-    method: "POST",
-    headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  });
-  if (!upstream.ok || !upstream.body) return json({ error: await geminiError(upstream) }, 502);
+  // One controller covers both the wait for Gemini's first byte and any stall mid-stream.
+  const abort = new AbortController();
+  let timer = setTimeout(() => abort.abort(new Error("connect timeout")), CONNECT_TIMEOUT_MS);
+  const touch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => abort.abort(new Error("idle timeout")), IDLE_TIMEOUT_MS);
+  };
 
-  const encoder = new TextEncoder();
-  const reader = upstream.body.pipeThrough(new TextDecoderStream()).getReader();
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${GEMINI_BASE}/models/${model}:streamGenerateContent?alt=sse`, {
+      method: "POST",
+      headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal: abort.signal,
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    log("gemini fetch failed", { error: String(e) });
+    return json({ error: abort.signal.aborted ? `Gemini (${model}) didn't respond in time. Try again, or pick another model.` : `Couldn't reach Gemini: ${(e as Error).message}` }, 504);
+  }
+  log("gemini responded", { status: upstream.status });
+  if (!upstream.ok || !upstream.body) {
+    clearTimeout(timer);
+    return json({ error: await geminiError(upstream) }, 502);
+  }
+  touch();
+
   let answer = "";
   const sources = new Map<string, string>();
   let saved = false;
+  let clientGone = false;
 
   const save = async () => {
     if (saved) return null;
@@ -260,73 +294,97 @@ Deno.serve(async (req) => {
       .single();
     if (error) throw new Error(`Could not save the reply: ${error.message}`);
     await sb.from("conversations").update({ model }).eq("id", conversationId);
+    log("saved", { chars: answer.length });
     return data;
   };
 
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const send = (event: unknown) => {
-        try { controller.enqueue(encoder.encode(JSON.stringify(event) + "\n")); } catch { /* client went away */ }
-      };
-      let buffer = "";
-      let blocked = "";
-      try {
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += value;
-          let nl: number;
-          while ((nl = buffer.indexOf("\n")) >= 0) {
-            const line = buffer.slice(0, nl).trim();
-            buffer = buffer.slice(nl + 1);
-            if (!line.startsWith("data:")) continue;
-            let chunk;
-            try { chunk = JSON.parse(line.slice(5)); } catch { continue; }
-            if (chunk.error) throw new Error(chunk.error.message ?? "Gemini returned an error");
-            if (chunk.promptFeedback?.blockReason) blocked = chunk.promptFeedback.blockReason;
-            const cand = chunk.candidates?.[0];
-            for (const part of cand?.content?.parts ?? []) {
-              if (part.thought || typeof part.text !== "string") continue;
-              answer += part.text;
-              send({ type: "text", text: part.text });
-            }
-            for (const g of cand?.groundingMetadata?.groundingChunks ?? []) {
-              if (g.web?.uri) sources.set(g.web.uri, g.web.title || g.web.uri);
-            }
-            if (cand?.finishReason && !["STOP", "MAX_TOKENS", "FINISH_REASON_UNSPECIFIED"].includes(cand.finishReason) && !answer) {
-              blocked = cand.finishReason;
-            }
+  // Events go out as Server-Sent Events ("data: {json}\n\n"), which proxies pass through unbuffered.
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+  // Writes are queued rather than awaited, so a slow connection can't stall reading from Gemini.
+  const send = (event: unknown) => {
+    if (clientGone) return;
+    writer.write(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)).catch(() => {
+      if (!clientGone) log("client disconnected");
+      clientGone = true; // the user pressed stop or closed the tab
+    });
+  };
+
+  const pump = (async () => {
+    const reader = upstream.body!.getReader();
+    // Belt and braces: on timeout, also cancel the read directly so the loop below can't hang.
+    abort.signal.addEventListener("abort", () => { reader.cancel().catch(() => {}); });
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let blocked = "";
+    let chunks = 0;
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        touch();
+        buffer += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line.startsWith("data:")) continue;
+          let chunk;
+          try { chunk = JSON.parse(line.slice(5)); } catch { continue; }
+          if (chunks++ === 0) log("first chunk");
+          if (chunk.error) throw new Error(chunk.error.message ?? "Gemini returned an error");
+          if (chunk.promptFeedback?.blockReason) blocked = chunk.promptFeedback.blockReason;
+          const cand = chunk.candidates?.[0];
+          for (const part of cand?.content?.parts ?? []) {
+            if (part.thought || typeof part.text !== "string") continue;
+            answer += part.text;
+            send({ type: "text", text: part.text });
+          }
+          for (const g of cand?.groundingMetadata?.groundingChunks ?? []) {
+            if (g.web?.uri) sources.set(g.web.uri, g.web.title || g.web.uri);
+          }
+          if (cand?.finishReason && !["STOP", "MAX_TOKENS", "FINISH_REASON_UNSPECIFIED"].includes(cand.finishReason) && !answer) {
+            blocked = cand.finishReason;
           }
         }
-
-        if (!answer && blocked) throw new Error(`Gemini didn't answer (reason: ${blocked}). Try rephrasing.`);
-        if (sources.size) send({ type: "sources", sources: [...sources].map(([url, title]) => ({ url, title })) });
-
-        const message = await save();
-        if (body.generate_title === true && answer) {
-          const question = history[history.length - 1].content || "(attachment)";
-          const title = await makeTitle(apiKey, model, question, answer).catch(() => null);
-          if (title) {
-            await sb.from("conversations").update({ title }).eq("id", conversationId);
-            send({ type: "title", title });
-          }
-        }
-        send({ type: "done", model, message });
-      } catch (e) {
-        await save().catch(() => null);
-        send({ type: "error", error: (e as Error).message });
-      } finally {
-        try { controller.close(); } catch { /* already cancelled */ }
+        if (clientGone) { await reader.cancel().catch(() => {}); break; }
       }
-    },
-    async cancel() {
-      // The user pressed stop: keep what was written so far.
-      await reader.cancel().catch(() => {});
-      await save().catch(() => null);
-    },
-  });
+      clearTimeout(timer);
+      if (abort.signal.aborted) throw new Error(String(abort.signal.reason));
+      log("gemini finished", { chunks, chars: answer.length, blocked });
 
-  return new Response(stream, {
-    headers: { ...cors, "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-cache" },
+      if (!answer && blocked) throw new Error(`Gemini didn't answer (reason: ${blocked}). Try rephrasing.`);
+      if (!answer && !clientGone) throw new Error("Gemini returned an empty reply. Try again.");
+      if (sources.size) send({ type: "sources", sources: [...sources].map(([url, title]) => ({ url, title })) });
+
+      const message = await save();
+      if (body.generate_title === true && answer && !clientGone) {
+        const question = history[history.length - 1].content || "(attachment)";
+        const title = await makeTitle(apiKey, model, question, answer).catch(() => null);
+        if (title) {
+          await sb.from("conversations").update({ title }).eq("id", conversationId);
+          send({ type: "title", title });
+        }
+      }
+      send({ type: "done", model, message });
+    } catch (e) {
+      clearTimeout(timer);
+      const msg = abort.signal.aborted
+        ? `Gemini (${model}) stopped responding. Try again, or pick another model.`
+        : (e as Error).message;
+      log("stream error", { error: String(e) });
+      await save().catch(() => null);
+      send({ type: "error", error: msg });
+    } finally {
+      await writer.close().catch(() => {});
+      log("closed");
+    }
+  })();
+  // Keep the worker alive until the reply is saved, even if the browser disconnects.
+  (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime?.waitUntil(pump);
+
+  return new Response(readable, {
+    headers: { ...cors, "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no" },
   });
 });

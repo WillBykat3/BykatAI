@@ -5,6 +5,7 @@
   const BUCKET = "attachments";
   const MAX_FILE_BYTES = 10 * 1024 * 1024;
   const MAX_FILES = 10;
+  const STALL_MS = 90_000; // no data from the chat function for this long counts as a failure
   const SITE_URL = location.origin + location.pathname;
 
   // Files Gemini reads natively (sent as-is) and text/code files (sent as text).
@@ -531,6 +532,11 @@
     const box = $("messages");
     box.innerHTML = "";
     messages.forEach((m) => box.appendChild(renderMessage(m)));
+    if (messages.length && messages[messages.length - 1].role === "user" && !streaming) {
+      const note = el("div", "msg-error unanswered", `${icon("alert")}<span>This message didn't get a reply.</span><button class="btn" type="button">${icon("retry")}Retry</button>`);
+      note.querySelector("button").addEventListener("click", regenerate);
+      box.appendChild(note);
+    }
     markLast();
   }
 
@@ -804,6 +810,14 @@
 
     const controller = new AbortController();
     streaming = { controller, convoId: convo.id };
+    // Give up if nothing arrives for a while, instead of showing the dots forever.
+    let stalled = false;
+    let watchdog = 0;
+    const kick = () => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => { stalled = true; controller.abort(); }, STALL_MS);
+    };
+    kick();
     updateSend();
     renderSidebar();
 
@@ -830,11 +844,13 @@
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
+        kick();
         buf += value;
         let nl;
         while ((nl = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, nl).trim();
+          let line = buf.slice(0, nl).trim();
           buf = buf.slice(nl + 1);
+          if (line.startsWith("data:")) line = line.slice(5).trim(); // Server-Sent Events framing
           if (!line) continue;
           let ev;
           try { ev = JSON.parse(line); } catch { continue; }
@@ -849,12 +865,14 @@
         }
       }
     } catch (e) {
-      if (e.name !== "AbortError") {
+      if (stalled) m._error = "BykatAI didn't respond in time. Try again, or pick another model from the menu at the top.";
+      else if (e.name !== "AbortError") {
         m._error = /Failed to fetch|NetworkError|Load failed/i.test(e.message)
           ? "Couldn't reach BykatAI. Check your connection and try again."
           : e.message;
       }
     } finally {
+      clearTimeout(watchdog);
       if (frame) cancelAnimationFrame(frame);
       m._streaming = false;
       streaming = null;

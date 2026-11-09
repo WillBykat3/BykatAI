@@ -374,6 +374,7 @@ code, kbd, pre { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Me
 .msg-error svg { width: 18px; height: 18px; }
 .msg-error span { flex: 1; min-width: 180px; }
 .msg-error .btn { height: 32px; padding: 0 12px; font-size: 13.5px; }
+.msg-error.unanswered { margin: -12px 0 28px; }
 
 .sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .source {
