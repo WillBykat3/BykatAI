@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0b0b10" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)">
   <meta name="description" content="BykatAI: your AI assistant.">
   <title>BykatAI</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -23,8 +23,7 @@
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
-      <linearGradient id="brand-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b5cf6"/><stop offset="1" stop-color="#22d3ee"/></linearGradient>
-      <symbol id="i-logo" viewBox="0 0 32 32"><rect width="32" height="32" rx="9" fill="url(#brand-grad)"/><path fill="#fff" d="M16 5.5c.9 5.6 3.9 8.6 9.5 9.5v2c-5.6.9-8.6 3.9-9.5 9.5c-.9-5.6-3.9-8.6-9.5-9.5v-2C12.1 14.1 15.1 11.1 16 5.5z"/></symbol>
+      <symbol id="i-logo" viewBox="0 0 32 32"><rect width="32" height="32" rx="9" style="fill: var(--logo-bg)"/><path style="fill: var(--logo-fg)" d="M16 6.5c.8 5 3.5 7.7 8.5 8.5v2c-5 .8-7.7 3.5-8.5 8.5-.8-5-3.5-7.7-8.5-8.5v-2c5-.8 7.7-3.5 8.5-8.5z"/></symbol>
       <symbol id="i-spark" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5c.7 4.6 3.4 7.3 8 8v1.9c-4.6.7-7.3 3.4-8 8h-.1c-.7-4.6-3.4-7.3-8-8v-1.9c4.6-.7 7.3-3.4 8.1-8z"/></symbol>
       <symbol id="i-new" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H7a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-4"/><path d="M17.6 3.6a2 2 0 0 1 2.8 2.8L13 13.8l-3.5.9.9-3.5z"/></symbol>
       <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></symbol>
@@ -72,11 +71,10 @@
 
   <!-- ───────────── Auth ───────────── -->
   <div class="screen center-screen auth" id="auth" hidden>
-    <div class="auth-glow" aria-hidden="true"></div>
     <div class="card auth-card">
       <div class="auth-brand">
         <svg class="card-logo"><use href="#i-logo"/></svg>
-        <span class="wordmark">Bykat<span class="grad-text">AI</span></span>
+        <span class="wordmark">BykatAI</span>
       </div>
 
       <div class="auth-view" data-view="signin">
@@ -138,7 +136,7 @@
   <div class="screen app" id="app" hidden>
     <aside class="sidebar" id="sidebar">
       <div class="sb-head">
-        <a class="brand" href="#" id="brand-link"><svg class="brand-logo"><use href="#i-logo"/></svg><span class="wordmark">Bykat<span class="grad-text">AI</span></span></a>
+        <a class="brand" href="#" id="brand-link"><svg class="brand-logo"><use href="#i-logo"/></svg><span class="wordmark">BykatAI</span></a>
         <button class="icon-btn" id="sb-collapse" aria-label="Close sidebar" title="Close sidebar"><svg><use href="#i-sidebar"/></svg></button>
       </div>
       <button class="new-chat" id="new-chat"><svg><use href="#i-new"/></svg><span>New chat</span><kbd>Ctrl ⇧ O</kbd></button>
@@ -168,16 +166,8 @@
 
       <div class="thread" id="thread">
         <div class="empty" id="empty">
-          <div class="hero-orb" aria-hidden="true"><svg><use href="#i-logo"/></svg></div>
           <h1 class="greeting" id="greeting">Hello</h1>
-          <p class="sub">How can I help you today?</p>
           <div class="notice" id="gemini-notice" hidden><svg><use href="#i-alert"/></svg><span id="gemini-notice-text"></span></div>
-          <div class="suggestions" id="suggestions">
-            <button class="suggestion" data-prompt="Explain how black holes form, in simple terms."><svg><use href="#i-bulb"/></svg><span><strong>Explain a concept</strong><small>How do black holes form?</small></span></button>
-            <button class="suggestion" data-prompt="Write a polite email asking my manager for Friday off."><svg><use href="#i-pen"/></svg><span><strong>Help me write</strong><small>An email asking for a day off</small></span></button>
-            <button class="suggestion" data-prompt="Write a Python function that checks if a string is a palindrome, with tests."><svg><use href="#i-code"/></svg><span><strong>Write code</strong><small>A palindrome checker in Python</small></span></button>
-            <button class="suggestion" data-attach="1"><svg><use href="#i-image"/></svg><span><strong>Analyze a file</strong><small>Upload an image, PDF or document</small></span></button>
-          </div>
         </div>
         <div class="messages" id="messages"></div>
       </div>
@@ -197,6 +187,12 @@
           </div>
           <input type="file" id="file-input" multiple hidden>
         </form>
+        <div class="suggestions" id="suggestions">
+          <button class="suggestion" data-prompt="Explain how black holes form, in simple terms."><svg><use href="#i-bulb"/></svg>Explain a concept</button>
+          <button class="suggestion" data-prompt="Write a polite email asking my manager for Friday off."><svg><use href="#i-pen"/></svg>Help me write</button>
+          <button class="suggestion" data-prompt="Write a Python function that checks if a string is a palindrome, with tests."><svg><use href="#i-code"/></svg>Write code</button>
+          <button class="suggestion" data-attach="1"><svg><use href="#i-image"/></svg>Analyze a file</button>
+        </div>
         <p class="disclaimer">BykatAI can make mistakes. Check important info.</p>
       </div>
 

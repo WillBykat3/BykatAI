@@ -5,7 +5,8 @@
   const BUCKET = "attachments";
   const MAX_FILE_BYTES = 10 * 1024 * 1024;
   const MAX_FILES = 10;
-  const STALL_MS = 90_000; // no data from the chat function for this long counts as a failure
+  const STALL_MS = 120_000; // no data from the chat function for this long counts as a failure
+  const HINT_TTL_MS = 60 * 60_000; // how long Auto keeps starting with the last model that worked
   const SITE_URL = location.origin + location.pathname;
 
   // Files Gemini reads natively (sent as-is) and text/code files (sent as text).
@@ -259,7 +260,7 @@
   function renderGreeting() {
     const h = new Date().getHours();
     const part = h < 5 ? "Good evening" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
-    $("greeting").innerHTML = `${part}, <span class="grad-text">${esc(displayName().split(/\s+/)[0])}</span>`;
+    $("greeting").textContent = `${part}, ${displayName().split(/\s+/)[0]}`;
   }
 
   async function enterApp(u) {
@@ -607,7 +608,6 @@
 
     const node = el("div", "msg model");
     m._node = node;
-    node.appendChild(el("div", "", `<svg class="msg-avatar"><use href="#i-logo"/></svg>`));
     const body = el("div", "msg-body");
     const content = el("div", "md");
     body.appendChild(content);
@@ -741,6 +741,14 @@
     }),
   );
 
+  // The model Auto last got an answer from, so the next message skips models that were busy.
+  function lastGoodModel() {
+    try {
+      const v = JSON.parse(store.get("bykat:lastModel") || "null");
+      return v && Date.now() - v.at < HINT_TTL_MS ? v.id : undefined;
+    } catch { return undefined; }
+  }
+
   function titleFrom(text) {
     const t = text.replace(/\s+/g, " ").trim();
     return t.length > 48 ? `${t.slice(0, 48).trimEnd()}…` : t || "New chat";
@@ -834,6 +842,7 @@
       const res = await callFunction({
         conversation_id: convo.id,
         model: selectedModel || undefined,
+        auto_hint: selectedModel ? undefined : lastGoodModel(),
         web_search: webSearch,
         generate_title: generateTitle,
       }, controller.signal);
@@ -860,7 +869,10 @@
             convo.title = ev.title;
             if (current?.id === convo.id) document.title = `${ev.title} · BykatAI`;
             renderSidebar();
-          } else if (ev.type === "done") { if (ev.message) Object.assign(m, ev.message); }
+          } else if (ev.type === "done") {
+            if (ev.message) Object.assign(m, ev.message);
+            if (ev.model && !selectedModel) store.set("bykat:lastModel", JSON.stringify({ id: ev.model, at: Date.now() }));
+          }
           else if (ev.type === "error") throw new Error(ev.error);
         }
       }

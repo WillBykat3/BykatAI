@@ -1,7 +1,7 @@
 // BykatAI chat function: the only place the Gemini API key is used.
 //
 // POST { action: "models" }                        → { models, default }
-// POST { conversation_id, model?, web_search?, generate_title? }
+// POST { conversation_id, model?, auto_hint?, web_search?, generate_title? }
 //      → Server-Sent Events, each "data: {json}":
 //        {type:"text", text} · {type:"sources", sources} · {type:"title", title}
 //        {type:"done", message} · {type:"error", error}
@@ -18,8 +18,11 @@ const MAX_HISTORY = 100;                 // messages sent to Gemini per request
 const MAX_INLINE_BYTES = 12 * 1024 * 1024; // raw file bytes per request (base64 adds ~33%)
 const MAX_TEXT_FILE_CHARS = 200_000;
 const MODEL_ID = /^[a-z0-9][a-z0-9.\-]{1,80}$/;
-const CONNECT_TIMEOUT_MS = 45_000; // waiting for Gemini to start answering
-const IDLE_TIMEOUT_MS = 45_000;    // longest gap allowed between streamed chunks
+const FIRST_CONNECT_MS = 20_000; // wait for the first model to start answering…
+const NEXT_CONNECT_MS = 25_000;  // …and for each fallback model after it
+const MAX_ATTEMPTS = 3;          // models tried per message in Auto mode
+const IDLE_TIMEOUT_MS = 45_000;  // longest gap allowed between streamed chunks
+const RETRYABLE = new Set([404, 429, 500, 502, 503, 504]); // busy, over quota or unavailable
 
 const SYSTEM_PROMPT = `You are BykatAI, a helpful, knowledgeable and friendly AI assistant.
 Answer clearly and accurately. Use Markdown for structure when it helps (headings, lists, tables, code blocks with a language tag).
@@ -47,7 +50,8 @@ function projectKey(): string {
 type GeminiModel = { name: string; displayName?: string; description?: string; supportedGenerationMethods?: string[] };
 type ModelInfo = { id: string; name: string; description: string };
 
-const NON_CHAT = /(tts|image|imagen|live|embedding|embed|audio|transcribe|robotics|computer-use|aqa|learnlm|veo|lyria|gemma)/;
+// Models that exist but aren't general text chat (speech, images, music, agents, research, robotics…).
+const NON_CHAT = /(tts|image|imagen|banana|omni|live|embedding|embed|audio|transcribe|robotics|computer-use|customtools|aqa|learnlm|veo|lyria|gemma|research|antigravity)/;
 let modelCache: { at: number; models: ModelInfo[]; fallback: string } | null = null;
 
 function version(id: string): number {
@@ -93,6 +97,24 @@ async function defaultModel(apiKey: string): Promise<string> {
   const configured = Deno.env.get("GEMINI_MODEL");
   if (configured) return configured;
   return (await listModels(apiKey)).fallback;
+}
+
+// Models that recently failed (overloaded, out of quota, too slow), skipped for a while in Auto mode.
+const benched = new Map<string, number>();
+const bench = (model: string, ms: number) => benched.set(model, Date.now() + ms);
+
+// The order Auto tries models in: the browser's last working model, then the best-ranked Flash models.
+async function autoCandidates(apiKey: string, hint: unknown): Promise<string[]> {
+  const { models } = await listModels(apiKey);
+  const ids = models.map((m) => m.id);
+  const order: string[] = [];
+  const configured = Deno.env.get("GEMINI_MODEL");
+  if (configured) order.push(configured);
+  if (typeof hint === "string" && ids.includes(hint)) order.push(hint);
+  order.push(...ids.filter((id) => /flash/.test(id) && !/latest/.test(id)));
+  const unique = [...new Set(order)];
+  const healthy = unique.filter((id) => (benched.get(id) ?? 0) < Date.now());
+  return healthy.length ? healthy : unique;
 }
 
 async function geminiError(res: Response): Promise<string> {
@@ -218,9 +240,10 @@ Deno.serve(async (req) => {
   const conversationId = String(body.conversation_id ?? "");
   if (!conversationId) return json({ error: "conversation_id is required" }, 400);
 
-  let model: string;
+  const chosen = typeof body.model === "string" && MODEL_ID.test(body.model) ? body.model : null;
+  let candidates: string[];
   try {
-    model = typeof body.model === "string" && MODEL_ID.test(body.model) ? body.model : await defaultModel(apiKey);
+    candidates = chosen ? [chosen] : (await autoCandidates(apiKey, body.auto_hint)).slice(0, MAX_ATTEMPTS);
   } catch (e) {
     return json({ error: (e as Error).message }, 502);
   }
@@ -242,7 +265,7 @@ Deno.serve(async (req) => {
     return json({ error: "The last message must be from the user" }, 400);
   }
 
-  log("history loaded", { messages: history.length, model });
+  log("history loaded", { messages: history.length, candidates });
   const contents = await buildContents(sb, history);
   const request: Record<string, unknown> = {
     contents,
@@ -250,32 +273,50 @@ Deno.serve(async (req) => {
   };
   if (body.web_search === true) request.tools = [{ google_search: {} }];
 
-  // One controller covers both the wait for Gemini's first byte and any stall mid-stream.
-  const abort = new AbortController();
-  let timer = setTimeout(() => abort.abort(new Error("connect timeout")), CONNECT_TIMEOUT_MS);
+  // Try each candidate until one starts answering. A busy, over-quota or silent model is skipped
+  // in Auto mode; a model the user picked themselves gets a clear error instead.
+  let upstream: Response | null = null;
+  let model = candidates[0];
+  let abort = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let lastError = "";
+  for (const [i, candidate] of candidates.entries()) {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(new Error("connect timeout")), i === 0 ? FIRST_CONNECT_MS : NEXT_CONNECT_MS);
+    try {
+      const res = await fetch(`${GEMINI_BASE}/models/${candidate}:streamGenerateContent?alt=sse`, {
+        method: "POST",
+        headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+        signal: ac.signal,
+      });
+      log("gemini responded", { model: candidate, status: res.status });
+      if (res.ok && res.body) {
+        upstream = res;
+        model = candidate;
+        abort = ac;
+        timer = t;
+        break;
+      }
+      clearTimeout(t);
+      lastError = await geminiError(res);
+      if (!RETRYABLE.has(res.status)) return json({ error: lastError }, 502);
+      bench(candidate, res.status === 429 ? 10 * 60_000 : 3 * 60_000);
+    } catch (e) {
+      clearTimeout(t);
+      lastError = ac.signal.aborted ? `Gemini (${candidate}) didn't respond in time.` : `Couldn't reach Gemini: ${(e as Error).message}`;
+      log("gemini attempt failed", { model: candidate, error: String(e) });
+      bench(candidate, 3 * 60_000);
+    }
+  }
+  if (!upstream) {
+    const tip = chosen ? " Try again, or switch to BykatAI Auto in the model menu." : " Gemini is busy right now. Try again in a minute.";
+    return json({ error: lastError + tip }, 503);
+  }
   const touch = () => {
     clearTimeout(timer);
     timer = setTimeout(() => abort.abort(new Error("idle timeout")), IDLE_TIMEOUT_MS);
   };
-
-  let upstream: Response;
-  try {
-    upstream = await fetch(`${GEMINI_BASE}/models/${model}:streamGenerateContent?alt=sse`, {
-      method: "POST",
-      headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-      signal: abort.signal,
-    });
-  } catch (e) {
-    clearTimeout(timer);
-    log("gemini fetch failed", { error: String(e) });
-    return json({ error: abort.signal.aborted ? `Gemini (${model}) didn't respond in time. Try again, or pick another model.` : `Couldn't reach Gemini: ${(e as Error).message}` }, 504);
-  }
-  log("gemini responded", { status: upstream.status });
-  if (!upstream.ok || !upstream.body) {
-    clearTimeout(timer);
-    return json({ error: await geminiError(upstream) }, 502);
-  }
   touch();
 
   let answer = "";
@@ -311,8 +352,9 @@ Deno.serve(async (req) => {
     });
   };
 
+  const body$ = upstream.body!;
   const pump = (async () => {
-    const reader = upstream.body!.getReader();
+    const reader = body$.getReader();
     // Belt and braces: on timeout, also cancel the read directly so the loop below can't hang.
     abort.signal.addEventListener("abort", () => { reader.cancel().catch(() => {}); });
     const decoder = new TextDecoder();
