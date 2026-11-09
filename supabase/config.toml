@@ -1,0 +1,4 @@
+# The chat function checks the signed-in user itself (see supabase/functions/chat/index.ts),
+# so it works with both the new publishable keys and the legacy anon key.
+[functions.chat]
+verify_jwt = false
