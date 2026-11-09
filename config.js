@@ -2,8 +2,8 @@
 // and the Gemini key lives only in the Supabase Edge Function (never in this file).
 window.BYKAT_CONFIG = {
   // Supabase dashboard → Project Settings → API (or the "Connect" button)
-  SUPABASE_URL: "",   // e.g. "https://abcdefghijklmnop.supabase.co"
-  SUPABASE_KEY: "",   // the publishable key ("sb_publishable_...") or the legacy anon key
+  SUPABASE_URL: "https://ykejwnpgjhfcafohvfjx.supabase.co",
+  SUPABASE_KEY: "sb_publishable_YveSCkFLWmYf3HTo7MDyRQ_G8FHDUdq",
 
   // Show "Continue with Google" on the sign-in screen.
   // Only turn this on after enabling the Google provider in Supabase → Authentication → Sign In / Providers.
