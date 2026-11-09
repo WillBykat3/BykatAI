@@ -18,9 +18,8 @@ const MAX_HISTORY = 100;                 // messages sent to Gemini per request
 const MAX_INLINE_BYTES = 12 * 1024 * 1024; // raw file bytes per request (base64 adds ~33%)
 const MAX_TEXT_FILE_CHARS = 200_000;
 const MODEL_ID = /^[a-z0-9][a-z0-9.\-]{1,80}$/;
-const FIRST_CONNECT_MS = 20_000; // wait for the first model to start answering…
-const NEXT_CONNECT_MS = 25_000;  // …and for each fallback model after it
-const MAX_ATTEMPTS = 3;          // models tried per message in Auto mode
+const CONNECT_MS = 15_000;       // how long each model gets to start answering
+const MAX_ATTEMPTS = 4;          // models tried per message in Auto mode
 const IDLE_TIMEOUT_MS = 45_000;  // longest gap allowed between streamed chunks
 const RETRYABLE = new Set([404, 429, 500, 502, 503, 504]); // busy, over quota or unavailable
 
@@ -103,15 +102,22 @@ async function defaultModel(apiKey: string): Promise<string> {
 const benched = new Map<string, number>();
 const bench = (model: string, ms: number) => benched.set(model, Date.now() + ms);
 
-// The order Auto tries models in: the browser's last working model, then the best-ranked Flash models.
+// The order Auto tries models in: the browser's last working model, then Flash and Flash-Lite
+// models alternately (best first). Free-tier keys often find the big Flash models overloaded
+// while Flash-Lite still answers, so Lite is never more than one attempt away.
 async function autoCandidates(apiKey: string, hint: unknown): Promise<string[]> {
   const { models } = await listModels(apiKey);
-  const ids = models.map((m) => m.id);
+  const ids = models.map((m) => m.id).filter((id) => /flash/.test(id) && !/latest/.test(id));
+  const full = ids.filter((id) => !/lite/.test(id));
+  const lite = ids.filter((id) => /lite/.test(id));
   const order: string[] = [];
   const configured = Deno.env.get("GEMINI_MODEL");
   if (configured) order.push(configured);
   if (typeof hint === "string" && ids.includes(hint)) order.push(hint);
-  order.push(...ids.filter((id) => /flash/.test(id) && !/latest/.test(id)));
+  for (let i = 0; i < Math.max(full.length, lite.length); i++) {
+    if (full[i]) order.push(full[i]);
+    if (lite[i]) order.push(lite[i]);
+  }
   const unique = [...new Set(order)];
   const healthy = unique.filter((id) => (benched.get(id) ?? 0) < Date.now());
   return healthy.length ? healthy : unique;
@@ -280,9 +286,9 @@ Deno.serve(async (req) => {
   let abort = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let lastError = "";
-  for (const [i, candidate] of candidates.entries()) {
+  for (const candidate of candidates) {
     const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(new Error("connect timeout")), i === 0 ? FIRST_CONNECT_MS : NEXT_CONNECT_MS);
+    const t = setTimeout(() => ac.abort(new Error("connect timeout")), CONNECT_MS);
     try {
       const res = await fetch(`${GEMINI_BASE}/models/${candidate}:streamGenerateContent?alt=sse`, {
         method: "POST",
